@@ -103,6 +103,9 @@ else
     DOWNLOADER_ARGS=`set_downloader_args "$MD5" "$SHA1" "$NO_DECOMPRESS" "$LIMIT_TRANSFER_BW" "$SRC" "$DST"`
 fi
 
+#this cp only is executed when the receiver ds is kvm
+DOWNLOADER_ARGS="$DOWNLOADER_ARGS --convert qcow2"
+
 COPY_COMMAND="$UTILS_PATH/downloader.sh $DOWNLOADER_ARGS"
 
 if echo "$SRC" | grep -vq '^https\?://'; then
