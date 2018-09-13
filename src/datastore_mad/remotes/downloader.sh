@@ -425,7 +425,6 @@ if [ ! -z "$CONVERT" ]; then
 
     original_type=$(get_original_type)
     convert_type=$CONVERT
-
     convert="qemu-img convert -f \"$original_type\" -O \"$convert_type\" \"$TO\" \"$tmpimage\""
     eval "$convert"
 
