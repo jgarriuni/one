@@ -62,7 +62,8 @@ done < <($XPATH     /DS_DRIVER_ACTION_DATA/DATASTORE/BASE_PATH \
                     /DS_DRIVER_ACTION_DATA/DATASTORE/TEMPLATE/LIMIT_TRANSFER_BW \
                     /DS_DRIVER_ACTION_DATA/DATASTORE/TEMPLATE/CONVERT \
                     /DS_DRIVER_ACTION_DATA/DATASTORE/TEMPLATE/DRIVER \
-                    /DS_DRIVER_ACTION_DATA/IMAGE/TYPE)
+                    /DS_DRIVER_ACTION_DATA/IMAGE/TYPE \
+                    /DS_DRIVER_ACTION_DATA/IMAGE/ID)
 
 unset i
 
@@ -80,6 +81,7 @@ LIMIT_TRANSFER_BW="${XPATH_ELEMENTS[i++]}"
 CONVERT="${XPATH_ELEMENTS[i++]:-yes}"
 DRIVER="${XPATH_ELEMENTS[i++]}"
 IMAGE_TYPE="${XPATH_ELEMENTS[i++]}"
+ID="${XPATH_ELEMENTS[i++]}"
 
 DST=`generate_image_path`
 IMAGE_HASH=`basename $DST`
@@ -97,14 +99,6 @@ if [ "$IMAGE_TYPE" = "1" ] || [ "$TYPE" = "2" ]; then
     CONVERT=no
 fi
 
-if [ -n "$BRIDGE_LIST" ]; then
-    DOWNLOADER_ARGS=`set_downloader_args "$MD5" "$SHA1" "$NO_DECOMPRESS" "$LIMIT_TRANSFER_BW" "$SRC" -`
-else
-    DOWNLOADER_ARGS=`set_downloader_args "$MD5" "$SHA1" "$NO_DECOMPRESS" "$LIMIT_TRANSFER_BW" "$SRC" "$DST"`
-fi
-
-COPY_COMMAND="$UTILS_PATH/downloader.sh $DOWNLOADER_ARGS"
-
 if echo "$SRC" | grep -vq '^https\?://'; then
     if [ `check_restricted $SRC` -eq 1 ]; then
         log_error "Not allowed to copy images from $RESTRICTED_DIRS"
@@ -117,40 +111,43 @@ else
     log "Downloading image $SRC to the image repository"
 fi
 
-CONVERT_CMD=$(cat <<EOF
-    set -e -o pipefail
-    FORMAT=\$($QEMU_IMG info $DST | grep "^file format:" | awk '{print \$3}' || :)
-
-    if [ "x$DRIVER" = 'xqcow2' ] || [ "x$DRIVER" = 'xraw' ]; then
-        if [ -n "\$FORMAT" ] && [ "x\$FORMAT" != "x$DRIVER" ]; then
-            $QEMU_IMG convert -O $DRIVER $DST $DST.tmp
-            mv $DST.tmp $DST
-        fi
-    fi
-EOF
-)
 
 if [ -n "$BRIDGE_LIST" ]; then
-    DST_HOST=`get_destination_host $ID`
-    TMP_DST="$STAGING_DIR/$IMAGE_HASH"
-
-    multiline_exec_and_log "set -e -o pipefail; $COPY_COMMAND | $SSH $DST_HOST $DD of=$TMP_DST bs=64k" \
-                 "Error dumping $SRC to $DST_HOST:$TMP_DST"
-
-    ssh_exec_and_log    "$DST_HOST" "set -e -o pipefail; mkdir -p $BASE_PATH; mv -f $TMP_DST $DST" \
-                        "Error moving $TMP_DST to $DST in $DST_HOST"
-
-    if [ "x$CONVERT" = 'xyes' ] && [ -n "$DRIVER" ]; then
-        ssh_exec_and_log "$DST_HOST" "$CONVERT_CMD" \
-                         "Error converting $DST in $DST_HOST"
-    fi
+    DOWNLOADER_ARGS=`set_downloader_args "$MD5" "$SHA1" "$NO_DECOMPRESS" "$LIMIT_TRANSFER_BW" "$SRC" -`
 else
-    mkdir -p "$BASE_PATH"
-    multiline_exec_and_log "set -e -o pipefail; $COPY_COMMAND" "Error copying $SRC to $DST"
-
-    if [ "x$CONVERT" = 'xyes' ] && [ -n "$DRIVER" ]; then
-        multiline_exec_and_log "$CONVERT_CMD" "Error converting $DST"
-    fi
+    DOWNLOADER_ARGS=`set_downloader_args "$MD5" "$SHA1" "$NO_DECOMPRESS" "$LIMIT_TRANSFER_BW" "$SRC" "$DST"`
 fi
+
+DOWNLOADER_ARGS="$DOWNLOADER_ARGS --convert qcow2"
+COPY_COMMAND="$UTILS_PATH/downloader.sh $DOWNLOADER_ARGS"
+
+mkdir -p "$BASE_PATH"
+multiline_exec_and_log "set -e -o pipefail; $COPY_COMMAND" "Error copying $SRC to $DST"
+
+if [ "x$CONVERT" = 'xyes' ] && [ -n "$DRIVER" ]; then
+    multiline_exec_and_log "$CONVERT_CMD" "Error converting $DST"
+fi
+
+unlock="oneimage unlock \"$ID\""
+eval "$unlock"
+
+command=""
+checkFormat="oneimage show \"$ID\" | grep FORMAT"
+
+if [ -z $(eval "$checkFormat") ]; then
+    command="EDITOR='echo \"FORMAT=\"qcow2\"\" >>' oneimage update \"$ID\" -a"
+else
+    command="EDITOR='sed -i \"s/FORMAT=.*/FORMAT=qcow2/\" ' oneimage update \"$ID\""
+fi
+eval "$command"
+
+checkDriver="oneimage show \"$ID\" | grep DRIVER"
+
+if [ -z $(eval "$checkDriver") ]; then
+    command="EDITOR='echo \"DRIVER=\"qcow2\"\" >>' oneimage update \"$ID\" -a"
+else
+    command="EDITOR='sed -i \"s/DRIVER=.*/DRIVER=qcow2/\" ' oneimage update \"$ID\""
+fi
+eval "$command"
 
 echo "$DST"
